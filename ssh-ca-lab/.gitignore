@@ -1,2 +1,7 @@
 ca/private/*
 users/*/*_key
+
+# Private keys
+ca/private/*
+hosts/*/host_key
+users/*/*_key

@@ -1,0 +1,187 @@
+
+🔐 SSH Certificate Authority (SSH-CA) LAB
+Ubuntu 22.04 LTS – VirtualBox – Manual Commands
+🧱 LAB IP PLAN (FIXED)
+Role
+VM Name
+IP
+CA Server
+ssh-ca-01
+10.10.100.100
+Target Host
+ssh-host-01
+10.10.100.101
+Client
+ssh-client-01
+10.10.100.102
+Username (all)
+aminulpmics
+—
+
+
+🟢 SLIDE 1 — BASE OS PREP (ALL VMs)
+sudo apt update && sudo apt -y upgrade
+sudo apt -y install openssh-server
+sudo systemctl enable ssh
+sudo systemctl start ssh
+
+Create common user:
+sudo useradd -m -s /bin/bash aminulpmics
+sudo passwd aminulpmics
+sudo usermod -aG sudo aminulpmics
+
+
+🟢 SLIDE 2 — NETWORK CONFIG (ALL VMs)
+Disable cloud-init networking
+sudo mkdir -p /etc/cloud/cloud.cfg.d
+echo "network: {config: disabled}" | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+
+
+🔹 CA SERVER (ssh-ca-01)
+sudo tee /etc/netplan/01-ca.yaml <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s3:
+      dhcp4: true
+    enp0s8:
+      dhcp4: false
+      addresses:
+        - 10.10.100.100/24
+EOF
+
+sudo chmod 600 /etc/netplan/01-ca.yaml
+sudo netplan apply
+
+
+🔹 TARGET HOST (ssh-host-01)
+sudo tee /etc/netplan/01-host.yaml <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s3:
+      dhcp4: true
+    enp0s8:
+      dhcp4: false
+      addresses:
+        - 10.10.100.101/24
+EOF
+
+sudo chmod 600 /etc/netplan/01-host.yaml
+sudo netplan apply
+
+
+🔹 CLIENT (ssh-client-01)
+sudo tee /etc/netplan/01-client.yaml <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s3:
+      dhcp4: true
+    enp0s8:
+      dhcp4: false
+      addresses:
+        - 10.10.100.102/24
+EOF
+
+sudo chmod 600 /etc/netplan/01-client.yaml
+sudo netplan apply
+
+
+🟢 SLIDE 3 — SSH CA CREATION (CA SERVER)
+sudo mkdir -p /etc/ssh/ca
+cd /etc/ssh/ca
+sudo ssh-keygen -t ed25519 -f ssh_user_ca -C "SSH User CA"
+sudo ssh-keygen -t ed25519 -f ssh_host_ca -C "SSH Host CA"
+sudo chmod 600 ssh_*_ca
+
+
+🟢 SLIDE 4 — USER KEY (CLIENT)
+ssh-keygen -t ed25519 -f ~/.ssh/aminulpmics_key -C "aminulpmics-user"
+
+Copy public key to CA:
+scp ~/.ssh/aminulpmics_key.pub aminulpmics@10.10.100.100:/tmp/
+
+
+🟢 SLIDE 5 — SIGN USER CERT (CA SERVER)
+sudo ssh-keygen -s /etc/ssh/ca/ssh_user_ca \
+  -I aminulpmics-user-cert \
+  -n aminulpmics \
+  -V +7d \
+  /tmp/aminulpmics_key.pub
+
+Return cert to client:
+scp /tmp/aminulpmics_key-cert.pub aminulpmics@10.10.100.102:~/.ssh/
+
+
+🟢 SLIDE 6 — HOST KEY & CERT (TARGET HOST)
+sudo ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
+
+Copy public key to CA:
+scp /etc/ssh/ssh_host_ed25519_key.pub aminulpmics@10.10.100.100:/tmp/ssh-host.pub
+
+
+🟢 SLIDE 7 — SIGN HOST CERT (CA SERVER)
+sudo ssh-keygen -s /etc/ssh/ca/ssh_host_ca \
+  -I ssh-host-01 \
+  -h \
+  -n ssh-host-01,10.10.100.101 \
+  -V +52w \
+  /tmp/ssh-host.pub
+
+Send cert back:
+scp /tmp/ssh-host-cert.pub aminulpmics@10.10.100.101:/tmp/
+
+
+🟢 SLIDE 8 — CONFIGURE SSHD (TARGET HOST)
+sudo mv /tmp/ssh-host-cert.pub /etc/ssh/
+
+Edit SSH config:
+sudo tee -a /etc/ssh/sshd_config <<EOF
+
+TrustedUserCAKeys /etc/ssh/ssh_user_ca.pub
+HostCertificate /etc/ssh/ssh-host-cert.pub
+EOF
+
+Copy CA public key:
+scp aminulpmics@10.10.100.100:/etc/ssh/ca/ssh_user_ca.pub /etc/ssh/
+
+Restart SSH:
+sudo systemctl restart ssh
+
+
+🟢 SLIDE 9 — CLIENT SSH CONFIG
+tee ~/.ssh/config <<EOF
+Host ssh-host-01
+    HostName 10.10.100.101
+    User aminulpmics
+    IdentityFile ~/.ssh/aminulpmics_key
+    CertificateFile ~/.ssh/aminulpmics_key-cert.pub
+EOF
+
+chmod 600 ~/.ssh/config
+
+
+🟢 SLIDE 10 — LOGIN TEST
+ssh ssh-host-01
+
+✅ Passwordless
+✅ No authorized_keys
+✅ Certificate-based trust
+
+🟢 SLIDE 11 — VERIFY CERTS
+ssh-keygen -L -f ~/.ssh/aminulpmics_key-cert.pub
+ssh-keygen -L -f /etc/ssh/ssh-host-cert.pub
+
+
+🟢 SLIDE 12 — SECURITY BENEFITS (ONE SLIDE)
+✔ No static keys
+✔ Central revocation
+✔ Short-lived access
+✔ Scales to thousands of servers
+✔ Enterprise-grade SSH security
+
+
